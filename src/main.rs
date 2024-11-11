@@ -2,7 +2,7 @@ use eframe::egui;
 use egui::ViewportBuilder;
 use resvg::{render, tiny_skia};
 use std::fs::File;
-use std::io::{BufReader, Read};
+use std::io::Read;
 use tiny_skia::Pixmap;
 use usvg::{Options, Tree};
 
@@ -11,10 +11,8 @@ struct SvgConverterApp {
     output_path: String,
     scale: u32,
     status_message: String,
-    original_width: Option<u32>,
-    original_height: Option<u32>,
-    will_be_width: Option<u32>,
-    will_be_height: Option<u32>,
+    original_dimensions: Option<(u32, u32)>,
+    scaled_dimensions: Option<(u32, u32)>,
 }
 
 impl Default for SvgConverterApp {
@@ -24,63 +22,44 @@ impl Default for SvgConverterApp {
             output_path: String::from("output.png"),
             scale: 1,
             status_message: String::new(),
-            original_width: None,
-            original_height: None,
-            will_be_width: None,
-            will_be_height: None,
+            original_dimensions: None,
+            scaled_dimensions: None,
         }
     }
 }
 
 impl SvgConverterApp {
     fn update_dimensions(&mut self) {
-        if self.input_path.is_empty() {
-            self.original_width = None;
-            self.original_height = None;
+        self.original_dimensions = if self.input_path.is_empty() {
+            None
         } else {
-            if let Ok(file) = File::open(&self.input_path) {
-                let mut reader = BufReader::new(file);
-                let mut svg_data = String::new();
-                if reader.read_to_string(&mut svg_data).is_ok() {
-                    let options = Options::default();
-                    if let Ok(rtree) = Tree::from_str(&svg_data, &options) {
-                        self.original_width = Some(rtree.size.width() as u32);
-                        self.original_height = Some(rtree.size.height() as u32);
-                    }
-                }
-            }
-        }
+            File::open(&self.input_path)
+                .ok()
+                .and_then(|file| {
+                    let mut svg_data = String::new();
+                    let mut reader = std::io::BufReader::new(file);
+                    reader.read_to_string(&mut svg_data).ok()?;
+                    Tree::from_str(&svg_data, &Options::default()).ok()
+                })
+                .map(|rtree| (rtree.size.width() as u32, rtree.size.height() as u32))
+        };
 
-        // Always update the will_be dimensions
-        self.will_be_width = self.original_width.map(|w| w * self.scale);
-        self.will_be_height = self.original_height.map(|h| h * self.scale);
+        self.scaled_dimensions = self
+            .original_dimensions
+            .map(|(w, h)| (w * self.scale, h * self.scale));
     }
 
     fn svg_to_png(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // Read SVG file
         let mut svg_data = String::new();
-        let file = File::open(&self.input_path)?;
-        let mut reader = BufReader::new(file);
-        reader.read_to_string(&mut svg_data)?;
+        File::open(&self.input_path)?.read_to_string(&mut svg_data)?;
 
-        // Parse SVG
-        let options = Options::default();
-        let rtree = Tree::from_str(&svg_data, &options)?;
+        let rtree = Tree::from_str(&svg_data, &Options::default())?;
+        let (width, height) = self.scaled_dimensions.ok_or("Dimensions not calculated")?;
 
-        // Calculate dimensions
-        let width = (rtree.size.width() as u32) * self.scale;
-        let height = (rtree.size.height() as u32) * self.scale;
-
-        // Create a pixel map with scaled dimensions
         let mut pixmap = Pixmap::new(width, height).ok_or("Failed to create pixmap")?;
-
-        // Apply transform for scaling
         let transform = tiny_skia::Transform::from_scale(self.scale as f32, self.scale as f32);
 
-        // Render SVG to pixel map
         render(&rtree, usvg::FitTo::Original, transform, pixmap.as_mut());
-
-        // Save to PNG file
         pixmap.save_png(&self.output_path)?;
 
         #[cfg(target_os = "macos")]
@@ -94,7 +73,7 @@ impl SvgConverterApp {
 
 impl eframe::App for SvgConverterApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.update_dimensions(); // Call this every frame
+        self.update_dimensions();
 
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.with_layout(egui::Layout::top_down(egui::Align::Center), |ui| {
@@ -131,36 +110,28 @@ impl eframe::App for SvgConverterApp {
                     }
                 });
 
-                // Scaling factor dropdown
                 ui.add_space(10.0);
-                let mut scale_changed = false;
                 ui.horizontal(|ui| {
                     ui.label("Scale:");
-                    scale_changed |= egui::ComboBox::from_label("Select Scale")
-                        .selected_text(format!("{}", self.scale))
+                    egui::ComboBox::from_label("Select Scale")
+                        .selected_text(self.scale.to_string())
                         .show_ui(ui, |ui| {
                             for &scale in &[1, 2, 4, 8, 16, 32, 64] {
                                 ui.selectable_value(&mut self.scale, scale, format!("{}x", scale));
                             }
-                        })
-                        .response
-                        .changed();
+                        });
                 });
 
                 ui.add_space(10.0);
 
-                if let (Some(original_width), Some(original_height)) =
-                    (self.original_width, self.original_height)
-                {
+                if let Some((original_width, original_height)) = self.original_dimensions {
                     ui.label(format!(
                         "Original size: {}x{}",
                         original_width, original_height
                     ));
                 }
 
-                if let (Some(will_be_width), Some(will_be_height)) =
-                    (self.will_be_width, self.will_be_height)
-                {
+                if let Some((will_be_width, will_be_height)) = self.scaled_dimensions {
                     ui.label(format!(
                         "Will be size: {}x{}",
                         will_be_width, will_be_height
