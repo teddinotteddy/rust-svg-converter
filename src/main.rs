@@ -3,6 +3,7 @@ use egui::ViewportBuilder;
 use resvg::{render, tiny_skia};
 use std::fs::File;
 use std::io::Read;
+use std::process::Command;
 use tiny_skia::Pixmap;
 use usvg::{Options, Tree};
 
@@ -63,9 +64,21 @@ impl SvgConverterApp {
         pixmap.save_png(&self.output_path)?;
 
         #[cfg(target_os = "macos")]
-        std::process::Command::new("open")
-            .arg(&self.output_path)
-            .spawn()?;
+        {
+            Command::new("open").arg(&self.output_path).spawn()?;
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            Command::new("cmd")
+                .args(&["/C", "start", "", &self.output_path])
+                .spawn()?;
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            Command::new("xdg-open").arg(&self.output_path).spawn()?;
+        }
 
         Ok(())
     }
