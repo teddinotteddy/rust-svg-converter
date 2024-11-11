@@ -1,0 +1,12 @@
+[package]
+name = "svg_to_png"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+eframe = "0.24.0"
+egui = "0.24.0"
+rfd = "0.11"
+usvg = "0.29"
+resvg = "0.29"
+tiny-skia = "0.10"
